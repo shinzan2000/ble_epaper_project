@@ -1,3 +1,8 @@
+# BLE Peripheral for E-Paper Display (v1.3)
+# Version History:
+# - v1.3: バッファ受信時の描画処理を条件なしで実行
+# - v1.2: 一部の要件に合致しないため修正が必要
+
 import ubluetooth
 import time
 from epaper2in13 import EPD_2in13_B_V4_Landscape
@@ -72,15 +77,22 @@ class BLEPeripheral:
         raw_value = self.ble.gatts_read(attr_handle)
         print(f"Received raw data length: {len(raw_value)}")
         self.buffer.extend(raw_value)
+        print(f"[DEBUG] Current buffer length: {len(self.buffer)} / {self.expected_size} bytes")
 
-        if len(self.buffer) == self.expected_size:
-            print("Received full data, processing buffer...")
-            self._process_buffer()
+        # Log warning if buffer exceeds the expected size
+        if len(self.buffer) > self.expected_size:
+            print(f"[ERROR] Buffer overflow detected: Current size={len(self.buffer)}, Expected size={self.expected_size}")
+            print("[ERROR] Data will not be processed. Please check central-side configuration.")
+            return  # Stop further processing for this write.
+
+        # Call processing for every received buffer update
+        self._process_buffer()
 
     def _process_buffer(self):
         print(f"[DEBUG] Buffer size: {len(self.buffer)} bytes")
         self.update_display(self.buffer)
-        self.buffer = bytearray()
+        self.buffer = bytearray()  # Clear buffer after processing
+        print("[DEBUG] Buffer cleared after processing")
 
     def update_display(self, data):
         try:
