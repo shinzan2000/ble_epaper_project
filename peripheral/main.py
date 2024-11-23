@@ -1,95 +1,108 @@
-import bluetooth
-from micropython import const
-import struct
+import ubluetooth
 import time
-
-# Constants
-_ADV_TYPE = const(0x01)
-_MTU_DEFAULT = 23  # Default MTU size
+from epaper2in13 import EPD_2in13_B_V4_Landscape
 
 class BLEPeripheral:
-    def __init__(self, name="ShelfTag", expected_size=128 * 250 // 8 * 2):
+    def __init__(self, name="PicoBLE"):
+        self.ble = ubluetooth.BLE()
+        self.ble.active(True)
         self.name = name
-        self.expected_size = expected_size
-        self.buffer = bytearray()
-        self.mtu = _MTU_DEFAULT
-        self._ble = bluetooth.BLE()
-        self._ble.active(True)
+        self.mtu = 244
+        self.ble.config(mtu=self.mtu)
+        self.ble.irq(self._irq_handler)
         self._register_services()
-        self._ble.irq(self._irq)
         self._advertise()
-        print(f"Peripheral initialized and advertising...")
+        self.buffer = bytearray()
+        self.expected_size = 128 * 250 // 8 * 2
 
-    def _register_services(self):
-        # Custom GATT service and characteristic
-        service_uuid = bluetooth.UUID("12345678-1234-5678-1234-56789abcdef0")
-        char_uuid = bluetooth.UUID("87654321-4321-8765-4321-fedcba987654")
-        self._char = (char_uuid, bluetooth.FLAG_WRITE)
-        self._service = (service_uuid, (self._char,))
-        ((self._char_handle,),) = self._ble.gatts_register_services((self._service,))
-        print("GATT service registered.")
+        # 電子ペーパーの初期化処理を復元
+        self.epd = EPD_2in13_B_V4_Landscape()
+        self.epd.init()
+        self.epd.Clear(0xFF, 0xFF)
+        print("Peripheral initialized and advertising...")
+        print(f"Configured MTU size: {self.ble.config('mtu')} bytes")
 
-    def _advertise(self):
-        name = bytes(self.name, "utf-8")
-        adv_data = bytearray(b"\x02\x01\x06") + bytearray(
-            (len(name) + 1, 0x09)
-        ) + name
-        self._ble.gap_advertise(100_000, adv_data)
-        print(f"Advertising started...")
-
-    def _irq(self, event, data):
-        if event == bluetooth.IRQ_CENTRAL_CONNECT:
-            conn_handle, _, _ = data
+    def _irq_handler(self, event, data):
+        if event == 1:  # _IRQ_CENTRAL_CONNECT
             print("Central connected")
-            self._conn_handle = conn_handle
-            self.mtu = self._ble.gatts_get_mtu(self._conn_handle)
-            print(f"MTU after connection: {self.mtu}")
-
-        elif event == bluetooth.IRQ_CENTRAL_DISCONNECT:
+        elif event == 2:  # _IRQ_CENTRAL_DISCONNECT
             print("Central disconnected")
             self._advertise()
-
-        elif event == bluetooth.IRQ_GATTS_WRITE:
+        elif event == 3:  # _IRQ_GATTS_WRITE
             conn_handle, attr_handle = data
-            if attr_handle == self._char_handle:
+            if attr_handle == self.char_handle:
                 self._handle_write_event(attr_handle)
+        elif event == 21:  # _IRQ_MTU_EXCHANGED
+            conn_handle, mtu = data
+            self.mtu = mtu
+            print(f"MTU exchange completed. Negotiated MTU: {mtu}")
+
+    def _register_services(self):
+        service_uuid = ubluetooth.UUID("12345678-1234-5678-1234-56789abcdef0")
+        char_uuid = ubluetooth.UUID("87654321-4321-8765-4321-fedcba987654")
+        char_properties = ubluetooth.FLAG_READ | ubluetooth.FLAG_WRITE
+
+        self.service = (
+            service_uuid,
+            (
+                (char_uuid, char_properties),
+            ),
+        )
+        self.services = (self.service,)
+        self.handles = self.ble.gatts_register_services(self.services)
+        self.char_handle = self.handles[0][0]
+        print("Service and Characteristic registered")
+
+        self.ble.gatts_set_buffer(self.char_handle, self.mtu - 3, True)
+
+    def _advertise(self):
+        adv_payload = self._create_adv_payload(name=self.name)
+        self.ble.gap_advertise(500_000, adv_payload)
+        print("Advertising started...")
+
+    def _create_adv_payload(self, name):
+        import struct
+        payload = bytearray()
+        name_bytes = name.encode()
+        payload.extend(struct.pack("BB", len(name_bytes) + 1, 0x09))
+        payload.extend(name_bytes)
+        return payload
 
     def _handle_write_event(self, attr_handle):
-        # Write event handling
-        raw_data = self._ble.gatts_read(attr_handle)
-        print(f"Received raw data length: {len(raw_data)}")
-        self.buffer.extend(raw_data)
+        raw_value = self.ble.gatts_read(attr_handle)
+        print(f"Received raw data length: {len(raw_value)}")
+        self.buffer.extend(raw_value)
 
-        # Check if buffer overflow occurs
-        if len(self.buffer) > self.expected_size:
-            print("[ERROR] Buffer overflow detected. Clearing buffer...")
-            self.buffer.clear()
-            return
-
-        if len(self.buffer) >= self.expected_size:
+        if len(self.buffer) == self.expected_size:
             print("Received full data, processing buffer...")
             self._process_buffer()
 
     def _process_buffer(self):
-        print(f"Processing buffer of size: {len(self.buffer)}")
+        print(f"[DEBUG] Buffer size: {len(self.buffer)} bytes")
         self.update_display(self.buffer)
-        self.buffer.clear()
+        self.buffer = bytearray()
 
     def update_display(self, data):
-        """
-        Simulate sending data to an e-paper display.
-        """
-        print(f"Updating display with data of size: {len(data)}")
-        time.sleep(1)
-        print("Display update completed successfully.")
+        try:
+            print(f"Updating display with data of size: {len(data)}")
+            half_length = len(data) // 2
+            black_buffer = data[:half_length]
+            red_buffer = data[half_length:]
+
+            # 電子ペーパーの更新処理を復元
+            self.epd.Clear(0xFF, 0xFF)
+            self.epd.buffer_black[:len(black_buffer)] = black_buffer
+            self.epd.buffer_red[:len(red_buffer)] = red_buffer
+
+            self.epd.display()
+            print("Display updated successfully.")
+        except Exception as e:
+            print(f"Error updating display: {e}")
 
 def main():
-    peripheral = BLEPeripheral()
-    try:
-        while True:
-            time.sleep(1)
-    except KeyboardInterrupt:
-        print("Shutting down peripheral...")
+    BLEPeripheral(name="ShelfTag")
+    while True:
+        time.sleep(1)
 
 if __name__ == "__main__":
     main()
