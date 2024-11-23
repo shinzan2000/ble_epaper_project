@@ -1,11 +1,7 @@
-# BLE Peripheral for E-Paper Display (v1.3)
-# Version History:
-# - v1.3: バッファ受信時の描画処理を条件なしで実行
-# - v1.2: 一部の要件に合致しないため修正が必要
-
 import ubluetooth
 import time
 from epaper2in13 import EPD_2in13_B_V4_Landscape
+import struct
 
 class BLEPeripheral:
     def __init__(self, name="PicoBLE"):
@@ -18,9 +14,9 @@ class BLEPeripheral:
         self._register_services()
         self._advertise()
         self.buffer = bytearray()
-        self.expected_size = 128 * 250 // 8 * 2
+        self.expected_size = None  # 動的に設定
+        self.data_complete = False  # データ受信完了フラグ
 
-        # 電子ペーパーの初期化処理を復元
         self.epd = EPD_2in13_B_V4_Landscape()
         self.epd.init()
         self.epd.Clear(0xFF, 0xFF)
@@ -75,24 +71,34 @@ class BLEPeripheral:
 
     def _handle_write_event(self, attr_handle):
         raw_value = self.ble.gatts_read(attr_handle)
-        print(f"Received raw data length: {len(raw_value)}")
+        print(f"Received raw data length: {len(raw_value)} bytes")
         self.buffer.extend(raw_value)
-        print(f"[DEBUG] Current buffer length: {len(self.buffer)} / {self.expected_size} bytes")
+        print(f"[DEBUG] Current buffer length: {len(self.buffer)} / {self.expected_size or 'Unknown'} bytes")
 
-        # Log warning if buffer exceeds the expected size
-        if len(self.buffer) > self.expected_size:
-            print(f"[ERROR] Buffer overflow detected: Current size={len(self.buffer)}, Expected size={self.expected_size}")
-            print("[ERROR] Data will not be processed. Please check central-side configuration.")
-            return  # Stop further processing for this write.
+        # 初回受信で expected_size を設定
+        if self.expected_size is None:
+            if len(self.buffer) >= 4:  # ヘッダーの4バイトを確認
+                self.expected_size = struct.unpack("I", self.buffer[:4])[0]
+                self.buffer = self.buffer[4:]  # ヘッダー部分を除去
+                print(f"[INFO] Expected data size dynamically set to {self.expected_size} bytes")
+            else:
+                print("[ERROR] Insufficient data for header parsing. Awaiting more data...")
+                return
 
-        # Call processing for every received buffer update
-        self._process_buffer()
+        # 完全データ受信時の処理
+        if self.expected_size and len(self.buffer) >= self.expected_size:
+            if len(self.buffer) > self.expected_size:
+                print(f"[WARNING] Extra data detected. Adjusting buffer size.")
+                self.buffer = self.buffer[:self.expected_size]
+
+            print("Received full data, processing buffer...")
+            self._process_buffer()
+            self.data_complete = True
 
     def _process_buffer(self):
-        print(f"[DEBUG] Buffer size: {len(self.buffer)} bytes")
+        print(f"[DEBUG] Processing buffer of size: {len(self.buffer)} bytes")
         self.update_display(self.buffer)
-        self.buffer = bytearray()  # Clear buffer after processing
-        print("[DEBUG] Buffer cleared after processing")
+        self.buffer = bytearray()
 
     def update_display(self, data):
         try:
@@ -101,7 +107,6 @@ class BLEPeripheral:
             black_buffer = data[:half_length]
             red_buffer = data[half_length:]
 
-            # 電子ペーパーの更新処理を復元
             self.epd.Clear(0xFF, 0xFF)
             self.epd.buffer_black[:len(black_buffer)] = black_buffer
             self.epd.buffer_red[:len(red_buffer)] = red_buffer
