@@ -14,8 +14,8 @@ class BLEPeripheral:
         self._register_services()
         self._advertise()
         self.buffer = bytearray()
-        self.expected_size = None  # 動的に設定
-        self.data_complete = False  # データ受信完了フラグ
+        self.expected_size = None  # ヘッダーで設定
+        self.received_end_notification = False  # 完了通知フラグ
 
         self.epd = EPD_2in13_B_V4_Landscape()
         self.epd.init()
@@ -72,33 +72,50 @@ class BLEPeripheral:
     def _handle_write_event(self, attr_handle):
         raw_value = self.ble.gatts_read(attr_handle)
         print(f"Received raw data length: {len(raw_value)} bytes")
+        if raw_value == b"END":  # セントラルから送信終了通知を受信
+            print("[INFO] Received end notification from central.")
+            self.received_end_notification = True
+            self._check_and_process_buffer()
+            return
+
         self.buffer.extend(raw_value)
         print(f"[DEBUG] Current buffer length: {len(self.buffer)} / {self.expected_size or 'Unknown'} bytes")
 
-        # 初回受信で expected_size を設定
+        # 初回受信でヘッダー解析
         if self.expected_size is None:
             if len(self.buffer) >= 4:  # ヘッダーの4バイトを確認
-                self.expected_size = struct.unpack("I", self.buffer[:4])[0]
+                total_size = struct.unpack("I", self.buffer[:4])[0]  # ヘッダーに格納された総サイズ
+                self.expected_size = total_size - 4  # ヘッダーサイズを除外
                 self.buffer = self.buffer[4:]  # ヘッダー部分を除去
-                print(f"[INFO] Expected data size dynamically set to {self.expected_size} bytes")
+                print(f"[INFO] Expected data size dynamically set to {self.expected_size}")
             else:
                 print("[ERROR] Insufficient data for header parsing. Awaiting more data...")
                 return
 
-        # 完全データ受信時の処理
-        if self.expected_size and len(self.buffer) >= self.expected_size:
-            if len(self.buffer) > self.expected_size:
-                print(f"[WARNING] Extra data detected. Adjusting buffer size.")
-                self.buffer = self.buffer[:self.expected_size]
+        self._check_and_process_buffer()
 
-            print("Received full data, processing buffer...")
-            self._process_buffer()
-            self.data_complete = True
+    def _check_and_process_buffer(self):
+        # ペリファラル側の完全受信を確認
+        if self.received_end_notification:
+            # expected_size（セントラルのtotal_sizeに基づく）と受信バッファサイズを検証
+            if len(self.buffer) == self.expected_size:
+                print("Received full data and end notification, processing buffer...")
+                self._process_buffer()
+            elif len(self.buffer) < self.expected_size:
+                print(f"[ERROR] Buffer size mismatch: Expected={self.expected_size}, Received={len(self.buffer)}")
+                print("[ERROR] Transmission error detected. Please check MTU settings or retransmit.")
+            elif len(self.buffer) > self.expected_size:
+                print(f"[WARNING] Extra data received: Expected={self.expected_size}, Received={len(self.buffer)}")
+                print("[INFO] Adjusting buffer size and processing...")
+                self.buffer = self.buffer[:self.expected_size]
+                self._process_buffer()
 
     def _process_buffer(self):
         print(f"[DEBUG] Processing buffer of size: {len(self.buffer)} bytes")
         self.update_display(self.buffer)
         self.buffer = bytearray()
+        self.expected_size = None  # リセット
+        self.received_end_notification = False
 
     def update_display(self, data):
         try:
