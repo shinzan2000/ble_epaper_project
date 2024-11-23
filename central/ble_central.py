@@ -1,7 +1,7 @@
 import asyncio
-import hashlib
 from bleak import BleakClient
 from PIL import Image
+import zlib  # ハッシュ計算用ライブラリ
 
 ADDRESS = "2C:CF:67:04:CF:1B"  # ペリフェラルのMACアドレス
 CHAR_UUID = "87654321-4321-8765-4321-fedcba987654"
@@ -12,9 +12,6 @@ def prepare_image(file_path, size):
     data = bytearray(img.tobytes())
     return data
 
-def calculate_hash(data):
-    return hashlib.sha256(data).hexdigest()
-
 async def send_image(file_path_black, file_path_red, size, mtu):
     data_black = prepare_image(file_path_black, size)
     data_red = prepare_image(file_path_red, size)
@@ -24,8 +21,9 @@ async def send_image(file_path_black, file_path_red, size, mtu):
     chunk_size = mtu - 3
     header = total_size.to_bytes(4, byteorder='little')  # ヘッダーは4バイト
 
-    data_hash = calculate_hash(combined_data)
-    print(f"[INFO] Data hash (SHA-256): {data_hash}")
+    # ハッシュ値を計算（データ部分のみ）
+    data_hash = zlib.crc32(combined_data)
+    print(f"[INFO] Data hash (CRC32): {data_hash:#010x}")
 
     async with BleakClient(ADDRESS) as client:
         if await client.is_connected():
