@@ -1,5 +1,4 @@
 import ubluetooth
-import zlib  # ハッシュ計算用ライブラリ
 import time
 from epaper2in13 import EPD_2in13_B_V4_Landscape
 import struct
@@ -23,6 +22,17 @@ class BLEPeripheral:
         self.epd.Clear(0xFF, 0xFF)
         print("Peripheral initialized and advertising...")
         print(f"Configured MTU size: {self.ble.config('mtu')} bytes")
+
+    def calculate_crc32(self, data):
+        crc = 0xFFFFFFFF
+        for byte in data:
+            crc ^= byte
+            for _ in range(8):
+                if crc & 1:
+                    crc = (crc >> 1) ^ 0xEDB88320
+                else:
+                    crc >>= 1
+        return crc ^ 0xFFFFFFFF
 
     def _irq_handler(self, event, data):
         if event == 1:
@@ -96,7 +106,7 @@ class BLEPeripheral:
         if self.received_end_notification:
             if len(self.buffer) == self.expected_size:
                 print("Received full data and end notification, processing buffer...")
-                received_hash = zlib.crc32(self.buffer)
+                received_hash = self.calculate_crc32(self.buffer)
                 print(f"[INFO] Received data hash (CRC32): {received_hash:#010x}")
                 self._process_buffer()
             elif len(self.buffer) < self.expected_size:
