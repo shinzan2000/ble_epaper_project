@@ -2,7 +2,7 @@ import asyncio
 from bleak import BleakClient
 from PIL import Image
 
-ADDRESS = "2C:CF:67:04:CF:1A"  # ペリフェラルのMACアドレス
+ADDRESS = "2C:CF:67:04:CF:1F"  # ペリフェラルのMACアドレス
 CHAR_UUID = "87654321-4321-8765-4321-fedcba987654"
 
 def prepare_image(file_path, size):
