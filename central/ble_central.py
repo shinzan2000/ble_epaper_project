@@ -1,4 +1,5 @@
 import asyncio
+import hashlib
 from bleak import BleakClient
 from PIL import Image
 
@@ -11,6 +12,9 @@ def prepare_image(file_path, size):
     data = bytearray(img.tobytes())
     return data
 
+def calculate_hash(data):
+    return hashlib.sha256(data).hexdigest()
+
 async def send_image(file_path_black, file_path_red, size, mtu):
     data_black = prepare_image(file_path_black, size)
     data_red = prepare_image(file_path_red, size)
@@ -19,6 +23,9 @@ async def send_image(file_path_black, file_path_red, size, mtu):
     total_size = len(combined_data) + 4  # ヘッダー4バイトを加えた総データサイズ
     chunk_size = mtu - 3
     header = total_size.to_bytes(4, byteorder='little')  # ヘッダーは4バイト
+
+    data_hash = calculate_hash(combined_data)
+    print(f"[INFO] Data hash (SHA-256): {data_hash}")
 
     async with BleakClient(ADDRESS) as client:
         if await client.is_connected():

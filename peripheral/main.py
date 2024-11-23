@@ -2,6 +2,7 @@ import ubluetooth
 import time
 from epaper2in13 import EPD_2in13_B_V4_Landscape
 import struct
+import hashlib
 
 class BLEPeripheral:
     def __init__(self, name="PicoBLE"):
@@ -100,6 +101,8 @@ class BLEPeripheral:
             # expected_size（セントラルのtotal_sizeに基づく）と受信バッファサイズを検証
             if len(self.buffer) == self.expected_size:
                 print("Received full data and end notification, processing buffer...")
+                received_hash = hashlib.sha256(self.buffer).hexdigest()
+                print(f"[INFO] Received data hash (SHA-256): {received_hash}")
                 self._process_buffer()
             elif len(self.buffer) < self.expected_size:
                 print(f"[ERROR] Buffer size mismatch: Expected={self.expected_size}, Received={len(self.buffer)}")
