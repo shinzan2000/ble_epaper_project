@@ -1,24 +1,16 @@
+import os
 import asyncio
 from bleak import BleakClient
 from PIL import Image
 
 ADDRESS = "2C:CF:67:04:CF:1B"  # ペリフェラルのMACアドレス
-CHAR_UUID = "87654321-4321-8765-4321-fedcba987654"
-
-def calculate_crc32(data):
-    crc = 0xFFFFFFFF
-    for byte in data:
-        crc ^= byte
-        for _ in range(8):
-            if crc & 1:
-                crc = (crc >> 1) ^ 0xEDB88320
-            else:
-                crc >>= 1
-    return crc ^ 0xFFFFFFFF
+CHAR_UUID = "87654321-4321-8765-4321-fedcba987654"  # キャラクターID
 
 def prepare_image(file_path, size):
     img = Image.open(file_path).convert("1")
     img = img.resize(size)
+    # 電子ペーパーに合わせて回転
+    img = img.rotate(90, expand=True)
     data = bytearray(img.tobytes())
     return data
 
@@ -31,15 +23,15 @@ async def send_image(file_path_black, file_path_red, size, mtu):
     chunk_size = mtu - 3
     header = total_size.to_bytes(4, byteorder='little')  # ヘッダーは4バイト
 
-    # ハッシュ値を計算（データ部分のみ）
-    data_hash = calculate_crc32(combined_data)
-    print(f"[INFO] Data hash (CRC32): {data_hash:#010x}")
+    print(f"[DEBUG] Total data size (with header): {total_size} bytes")
+    print(f"[DEBUG] Chunk size: {chunk_size} bytes")
 
+    # 実際の送信部分
     async with BleakClient(ADDRESS) as client:
         if await client.is_connected():
             print("[INFO] Connected to peripheral")
-            print(f"[INFO] Total data size (with header): {total_size} bytes")
-            
+
+            # ヘッダーの送信
             try:
                 await client.write_gatt_char(CHAR_UUID, header)
                 print("[INFO] Header sent successfully.")
@@ -47,6 +39,7 @@ async def send_image(file_path_black, file_path_red, size, mtu):
                 print(f"[ERROR] Failed to send header: {e}")
                 return
 
+            # 画像データの送信
             for i in range(0, len(combined_data), chunk_size):
                 chunk = combined_data[i:i + chunk_size]
                 try:
