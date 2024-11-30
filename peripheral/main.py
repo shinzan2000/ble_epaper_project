@@ -132,18 +132,9 @@ class BLEPeripheral:
             black_buffer = data[:half_length]
             red_buffer = data[half_length:]
 
-            # デバッグ: バッファの内容を一部確認
-
-            print(f"[DEBUG] Black buffer size: {len(black_buffer)}")
-            print(f"[DEBUG] Red buffer size: {len(red_buffer)}")
-
             self.epd.Clear(0xFF, 0xFF)
             self.epd.buffer_black[:len(black_buffer)] = black_buffer
             self.epd.buffer_red[:len(red_buffer)] = red_buffer
-
-            # デバッグ: バッファ設定後の確認
-            print(f"[DEBUG] EPD black buffer (first 64 bytes): {self.epd.buffer_black[:64]}")
-            print(f"[DEBUG] EPD red buffer (first 64 bytes): {self.epd.buffer_red[:64]}")
 
             self.epd.display()
             print("Display updated successfully.")
